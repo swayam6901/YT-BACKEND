@@ -1,6 +1,0 @@
-redis
-firebase-admin
-faster-whisper
-torch
-transformers
-pytube
