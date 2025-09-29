@@ -1,11 +1,12 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Optional
+import os
 import uuid
+import httpx
+from typing import Optional
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
-app = FastAPI(title="YouTube AI Summarizer API Gateway")
-
-from .firebase_service import set_job_status, get_job_status, get_pending_jobs
+from firebase_service import set_job_status, get_job_status, get_pending_jobs
 
 class SummarizeRequest(BaseModel):
     video_url: str
@@ -17,8 +18,7 @@ class JobStatusResponse(BaseModel):
     summary: Optional[str] = None
     error: Optional[str] = None
 
-import httpx
-from fastapi.middleware.cors import CORSMiddleware
+app = FastAPI(title="YouTube AI Summarizer API Gateway")
 
 # Add CORS middleware
 app.add_middleware(
@@ -35,10 +35,14 @@ async def submit_summarization(req: SummarizeRequest):
     set_job_status(job_id, "queued")
     
     # Process job immediately
+    vercel_url = os.getenv("VERCEL_FUNCTION_URL")
+    if not vercel_url:
+        raise HTTPException(status_code=500, detail="Vercel function URL not configured")
+        
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://your-vercel-app.vercel.app/api/process",
+                vercel_url,
                 json={
                     "job_id": job_id,
                     "video_url": req.video_url,
@@ -47,9 +51,11 @@ async def submit_summarization(req: SummarizeRequest):
                 timeout=30.0
             )
             if response.status_code != 200:
-                set_job_status(job_id, "error", error="Failed to process job")
+                set_job_status(job_id, "error", error=f"Vercel function returned status {response.status_code}")
+                raise HTTPException(status_code=500, detail=f"Vercel function returned status {response.status_code}")
     except Exception as e:
         set_job_status(job_id, "error", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
     
     return JobStatusResponse(job_id=job_id, status="queued")
 
